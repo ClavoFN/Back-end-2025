@@ -1,87 +1,125 @@
-import fs from "fs"
-import path from "path"
-import { fileURLToPath } from "url"
 import { v4 as uuidv4 } from "uuid"
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
-const userPath = path.join(__dirname, "../data/users.json")
-
-const getUsersData = () => {
-    const userData = JSON.parse(fs.readFileSync(userPath, "utf8"))
-    return userData
-}
-
-const saveUsersData = (data) => {
-    fs.writeFileSync(userPath, JSON.stringify(data, null, 2))
-}
-
+import { db } from "../database.js"
 
 //GET ALL
-export const getUsers = (req, res) => {
-    const users = getUsersData();
-    res.send(users)
+export const getUsers = async (req, res) => {
+    try {
+        const users = await db.all("SELECT * FROM users")
+        res.json(users)
+    } catch {
+        res.status(500).json({message: "Error al obtener usuarios", error: error.message})
+    }
 }
 
 
-//GET ONE 
-export const getUsersById = (req, res) => {
-    const users = getUsersData();
-    const user = users.find(u => u.id == req.params.id)
+//GET BY ID 
+export const getUsersById = async (req, res) => {
+    try {
+    const { id } = req.params
 
-    user 
-        ? res.json(user)
-        : res.status(404).json({message: "Usuario no encontrado"})
+    const user = await db.get("SELECT * FROM users WHERE id = ?", id)
+
+    if(!user) {
+        return res.status(404).json({message: "Usuario no encontrado"})
+    }
+    res.json(user)
+
+    } catch {
+        res.status(500).json({message: "Error al buscar el usuario", error: error.message})
+    }
 }
 
 
 //CREATE
-export const createUser = (req, res) => {
-    const users = getUsersData();
-    const newUser = req.body 
+export const createUser = async (req, res) => {
+    try {
+    const {name, email, password} = req.body
 
-    newUser.id = uuidv4();
+    if (!name || !email || !password) {
+        return res.status(400).json({message: "Faltan datos obligatorios"})
+    }
 
-    users.push(newUser)
-    saveUsersData(users)
+    const existingUser = await db.get("SELECT * FROM users WHERE email = ?", email)
+
+    if (existingUser) {
+        return res.status(404).json({message: "El email ya se encuentra registrado"}
+        )
+    }
+    const newUser = {
+        id: uuidv4(),
+        name, 
+        email,
+        password
+    }
+
+    await db.run(
+        "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
+        newUser.id,
+        newUser.name,
+        newUser.email,
+        newUser.password
+    )
 
     res.status(201).json(newUser)
+
+    } catch {
+        res.status(500).json({message: "Error al crear usuario", error: error.message})
+    }
 }
 
 
 //UPDATE
-export const updateUser = (req, res) => {
-    const users = getUsersData();
+export const updateUser = async (req, res) => {
+    try {
     const { id } = req.params
-    const index = users.findIndex(u => u.id === id)
+    const {name, email, password } = req.body
 
-    if (index === -1) {
+    const user = await db.get("SELECT * FROM users WHERE id = ?", id)
+
+    if(!user) {
         return res.status(404).json({message: "Usuario no encontrado"})
     }
 
-    users[index] = {...users[index], ...req.body}
-    saveUsersData(users)
+    await db.run(
+        `
+        UPDATE users
+        SET name = ?, email = ?, password = ?
+        WHERE id = ?
+        `, 
+        name ?? user.name, 
+        email ?? user.email, 
+        password ?? user.password,
+        id
+    )
+
+    const updatedUser = await db.get("SELECT * FROM users WHERE id = ?", id)
 
     res.json({
         message: "Usuario actualizado",
-        data: users[index]
+        data: updatedUser
     })
+
+    } catch {
+        res.status(500).json({ message: "Error al actualizar usuario", error: error.message})
+    }
 }
 
 //DELETE
-export const deleteUser = (req, res) => {
-    const users = getUsersData();
+export const deleteUser = async (req, res) => {
+    try {
     const { id } = req.params
-    const index = users.findIndex(u => u.id === id)
 
-    if (index === -1) {
-        return res.status(404).json({message: "Usuario no encontrado"}
-        )
+    const user = await db.get("SELECT * FROM users WHERE id = ?", id)
+
+    if (!user) {
+        return res.status(404).json({message: "Usuario no encontrado"})
     }
 
-    users.splice(index, 1)
-    saveUsersData(users)
+    await db.run("DELETE FROM users WHERE id = ?", id)
 
     res.json({message: "Usuario eliminado"})
+
+    } catch {
+        res.status(500).json({ message: "Error al eliminar usuario", error: error.message})
+    }
 }

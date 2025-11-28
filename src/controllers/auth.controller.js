@@ -1,53 +1,60 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import { v4 as uuidv4} from "uuid"
+import { v4 as uuidv4 } from "uuid"
 import { generateJWT } from "../utils/generateJWT.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename)
-const userPath = path.join(__dirname, "../data/users.json")
-
-const getUsersData = () => JSON.parse(fs.readFileSync(userPath, "utf8"))
-const saveUsersData = (data) => {
-    fs.writeFileSync(userPath, JSON.stringify(data, null, 2))
-}
+import { db } from "../database.js"
+import bcrypt from "bcrypt"
 
 
 export const register = async (req, res) => {
-    const { name, email, password} = req.body
+    const { name, email, password } = req.body
 
     if (!name || !email || !password) {
         return res.status(404).json({ok: false, msg: "Faltan campos"})
-    }
+    };
+    
+    try {
+        const exists = await db.get(
+        "SELECT * FROM users WHERE email = ?",
+        [email]
+    )
 
-    const users = getUsersData();
-
-    const exists = users.find(u => u.email === email)
     if (exists) {
-        return res
-            .status(404)
-            .json({ok: false, msg: "El email ya está registrado"})
+        return res.status(400).json({ok: false, msg: "El email ya está registrado"})
     }
+
+    const hashedPassword = await bcrypt.hash(password, 10)
 
     const newUser = {
         id: uuidv4(),
         name, 
         email,
-        password
+        password: hashedPassword
     }
 
-    users.push(newUser);
-    saveUsersData(users)
+    await db.run(
+        "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
+        [newUser.id,
+        newUser.name,
+        newUser.email,
+        newUser.password]
+    )
 
     const token = await generateJWT(newUser.id)
 
     res.json({
         ok: true,
-        user: newUser,
+        user: {
+            id: newUser.id, 
+            name: newUser.name,
+            email: newUser.email
+        },
         token
     })
-}
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ok: false, msg: "Error del servidor"})
+    }
+    
+} 
 
 
 export const login = async (req, res) => {
@@ -57,15 +64,20 @@ export const login = async (req, res) => {
         return res.status(400).json({ok: false, msg: "Credenciales invalidas"}
         )
     }
-
-     const users = getUsersData();
-     const user = users.find(u => u.email === email)
+    
+    try {
+        const user = await db.get(
+        "SELECT * FROM users WHERE email = ?",
+        [email]
+    )
 
     if (!user) {
-        return res.status(400).json({ok: false, msg: "Faltan datos"})
+        return res.status(400).json({ok: false, msg: "Usuario no encontrado"})
     }
 
-    if (user.password !== password) {
+    const validPassword = await bcrypt.compare(password, user.password)
+
+    if (!validPassword) {
         return res.status(400).json({ok: false, msg: "Credenciales invalidas"}
         )
     }
@@ -77,4 +89,8 @@ export const login = async (req, res) => {
         msg: "Login correcto",
         token
     })
+    } catch (error) {
+        console.error(error)
+        res.status(500).json({ok: false, msg: "Erro en el servidor"})
+    }
 }
